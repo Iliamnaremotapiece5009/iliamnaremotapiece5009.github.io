@@ -75,7 +75,6 @@ function carregarArquivoExcel(event) {
       // Coluna W no Excel equivale ao índice 22 em arrays (A=0, B=1 ... W=22)
       const idxStatus = 22; 
       
-      // Busca a cidade e a data dinamicamente ou por padrão (C=2 para cidade, V=21 para data)
       let idxCidade = cabecalho.findIndex(c => c.includes("CIDADE") || c.includes("MUNIC"));
       let idxData = cabecalho.findIndex(c => c.includes("DATA") || c.includes("AGEND") || c.includes("PREV"));
 
@@ -83,16 +82,16 @@ function carregarArquivoExcel(event) {
       if (idxData === -1) idxData = 21;
 
       baseDadosGlobal = linhas.map((linha, index) => {
-        const statusOriginal = String(linha[idxStatus] || "").trim().toUpperCase();
+        const statusOriginal = String(linha[idxStatus] || "").trim();
         
         return {
           id: linha[0] || `PED-${index + 1}`,
           cidade: normalizarTexto(linha[idxCidade]),
           data: formatarDataIso(linha[idxData]),
           statusRaw: statusOriginal,
-          status: normalizarTexto(statusOriginal)
+          statusNorm: normalizarTexto(statusOriginal)
         };
-      }).filter(item => item.cidade || item.status);
+      }).filter(item => item.cidade || item.statusNorm);
 
       aplicarFiltrosEAtualizar();
 
@@ -110,7 +109,7 @@ function carregarArquivoExcel(event) {
 }
 
 /**
- * 2. FILTRAGEM COMPATÍVEL COM OS STATUS DA COLUNA W
+ * 2. FILTRAGEM DE ACORDO COM O STATUS DA COLUNA W
  */
 function aplicarFiltrosEAtualizar() {
   const statusFiltro = document.getElementById("statusFilter")?.value || "TODOS";
@@ -118,13 +117,10 @@ function aplicarFiltrosEAtualizar() {
   const dataFim = document.getElementById("endDate")?.value;
 
   const dadosFiltrados = baseDadosGlobal.filter(item => {
-    const st = item.status; // Status normalizado sem acentos
+    const st = item.statusNorm;
     let atendeStatus = false;
 
     switch (statusFiltro) {
-      case "AGENDADO_COLETADO":
-        atendeStatus = (st === "AGENDADO" || st === "COLETADO");
-        break;
       case "AGENDADO":
         atendeStatus = (st === "AGENDADO");
         break;
@@ -136,6 +132,10 @@ function aplicarFiltrosEAtualizar() {
         break;
       case "FINALIZADO":
         atendeStatus = (st === "FINALIZADO");
+        break;
+      case "PENDENTE_CONFERENCIA":
+      case "PENDENTE DE CONFERENCIA":
+        atendeStatus = (st.includes("PENDENTE") || st.includes("CONFERENCIA"));
         break;
       case "PROGRAMADO":
         atendeStatus = (st === "PROGRAMADO");
@@ -161,23 +161,29 @@ function aplicarFiltrosEAtualizar() {
 }
 
 /**
- * 3. PROCESSAMENTO DOS INDICADORES
+ * 3. PROCESSAMENTO EXATO DE TODOS OS STATUS
  */
 function processarDadosLogistica(dados) {
   let resumo = {
     totalPedidos: dados.length,
+    agendados: 0,
     coletas: 0,
-    recebimentos: 0,
     entregas: 0,
-    outrosTipos: 0,
+    finalizados: 0,
+    pendentesConferencia: 0,
+    programados: 0,
     regioes: { spAbc: 0, jaguariunaEntorno: 0, outras: 0 }
   };
 
   dados.forEach(item => {
-    if (item.status === "COLETADO") resumo.coletas++;
-    else if (item.status === "PENDENTE DE CONFERENCIA") resumo.recebimentos++;
-    else if (item.status === "ENTREGUE" || item.status === "FINALIZADO") resumo.entregas++;
-    else resumo.outrosTipos++;
+    const st = item.statusNorm;
+
+    if (st === "AGENDADO") resumo.agendados++;
+    else if (st === "COLETADO") resumo.coletas++;
+    else if (st === "ENTREGUE") resumo.entregas++;
+    else if (st === "FINALIZADO") resumo.finalizados++;
+    else if (st.includes("PENDENTE") || st.includes("CONFERENCIA")) resumo.pendentesConferencia++;
+    else if (st === "PROGRAMADO") resumo.programados++;
 
     if (CIDADES_SP_ABC.includes(item.cidade)) resumo.regioes.spAbc++;
     else if (CIDADES_JAGUARIUNA_ENTORNO.includes(item.cidade)) resumo.regioes.jaguariunaEntorno++;
@@ -201,19 +207,19 @@ function renderizarKPIs(resumo) {
       <small>Base filtrada</small>
     </div>
     <div class="kpi-card">
-      <span>Coletas</span>
-      <strong>${resumo.coletas}</strong>
-      <small>Operações de Coleta</small>
+      <span>Agendados / Programados</span>
+      <strong>${resumo.agendados + resumo.programados}</strong>
+      <small>Agend: ${resumo.agendados} | Prog: ${resumo.programados}</small>
     </div>
     <div class="kpi-card">
-      <span>Recebimentos / Conf.</span>
-      <strong>${resumo.recebimentos}</strong>
-      <small>Pendente de Conferência</small>
+      <span>Coletas / Pendentes</span>
+      <strong>${resumo.coletas + resumo.pendentesConferencia}</strong>
+      <small>Colet: ${resumo.coletas} | Conf: ${resumo.pendentesConferencia}</small>
     </div>
     <div class="kpi-card">
-      <span>Entregas / Finalizados</span>
-      <strong>${resumo.entregas}</strong>
-      <small>Destino Final</small>
+      <span>Entregues / Finalizados</span>
+      <strong>${resumo.entregas + resumo.finalizados}</strong>
+      <small>Entr: ${resumo.entregas} | Fin: ${resumo.finalizados}</small>
     </div>
   `;
 }
@@ -271,11 +277,18 @@ function renderizarGraficos(resumo, dados) {
     chartTipoInstance = new Chart(ctxTipo, {
       type: "bar",
       data: {
-        labels: ["Coletas", "Pend. Conferência", "Entregas/Finalizados", "Outros"],
+        labels: ["Agendado", "Coletado", "Entregue", "Finalizado", "Pend. Conf.", "Programado"],
         datasets: [{
-          label: "Volume de Pedidos",
-          data: [resumo.coletas, resumo.recebimentos, resumo.entregas, resumo.outrosTipos],
-          backgroundColor: ["#0284c7", "#f59e0b", "#10b981", "#64748b"]
+          label: "Quantidade",
+          data: [
+            resumo.agendados, 
+            resumo.coletas, 
+            resumo.entregas, 
+            resumo.finalizados, 
+            resumo.pendentesConferencia, 
+            resumo.programados
+          ],
+          backgroundColor: ["#3b82f6", "#0284c7", "#10b981", "#059669", "#f59e0b", "#8b5cf6"]
         }]
       },
       options: { responsive: true, maintainAspectRatio: false }
