@@ -22,11 +22,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const statusFilter = document.getElementById("statusFilter");
   const startDate = document.getElementById("startDate");
   const endDate = document.getElementById("endDate");
+  const btnClear = document.getElementById("btnClear");
 
   if (fileInput) fileInput.addEventListener("change", carregarArquivoExcel);
   if (statusFilter) statusFilter.addEventListener("change", aplicarFiltrosEAtualizar);
   if (startDate) startDate.addEventListener("change", aplicarFiltrosEAtualizar);
   if (endDate) endDate.addEventListener("change", aplicarFiltrosEAtualizar);
+  if (btnClear) btnClear.addEventListener("click", limparFiltrosDatas);
 });
 
 /**
@@ -89,7 +91,7 @@ function carregarArquivoExcel(event) {
 }
 
 /**
- * 2. FILTRAGEM DE DADOS
+ * 2. FILTRAGEM DE DADOS (COM SUPORTE A ENTREGUE E FINALIZADO)
  */
 function aplicarFiltrosEAtualizar() {
   const statusFiltro = document.getElementById("statusFilter")?.value || "TODOS";
@@ -98,8 +100,13 @@ function aplicarFiltrosEAtualizar() {
 
   const dadosFiltrados = baseDadosGlobal.filter(item => {
     let atendeStatus = true;
+    
     if (statusFiltro === "AGENDADO_COLETADO") {
       atendeStatus = item.status.includes("AGEND") || item.status.includes("COLET");
+    } else if (statusFiltro === "FINALIZADO") {
+      atendeStatus = item.status.includes("FINALIZAD") || item.status.includes("CONCLU");
+    } else if (statusFiltro === "ENTREGUE") {
+      atendeStatus = item.status.includes("ENTREG");
     } else if (statusFiltro !== "TODOS") {
       atendeStatus = item.status.includes(statusFiltro);
     }
@@ -134,7 +141,7 @@ function processarDadosLogistica(dados) {
   dados.forEach(item => {
     if (item.status.includes("COLET")) resumo.coletas++;
     else if (item.status.includes("RECEB")) resumo.recebimentos++;
-    else if (item.status.includes("ENTREG")) resumo.entregas++;
+    else if (item.status.includes("ENTREG") || item.status.includes("FINALIZAD")) resumo.entregas++;
     else resumo.outrosTipos++;
 
     if (CIDADES_SP_ABC.includes(item.cidade)) resumo.regioes.spAbc++;
@@ -169,7 +176,7 @@ function renderizarKPIs(resumo) {
       <small>Entradas no CD</small>
     </div>
     <div class="kpi-card">
-      <span>Entregas</span>
+      <span>Entregas / Finalizados</span>
       <strong>${resumo.entregas}</strong>
       <small>Destino Final</small>
     </div>
@@ -229,7 +236,7 @@ function renderizarGraficos(resumo, dados) {
     chartTipoInstance = new Chart(ctxTipo, {
       type: "bar",
       data: {
-        labels: ["Coletas", "Recebimentos", "Entregas", "Outros"],
+        labels: ["Coletas", "Recebimentos", "Entregas/Finalizados", "Outros"],
         datasets: [{
           label: "Volume de Pedidos",
           data: [resumo.coletas, resumo.recebimentos, resumo.entregas, resumo.outrosTipos],
