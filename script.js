@@ -31,9 +31,6 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnClear) btnClear.addEventListener("click", limparFiltrosDatas);
 });
 
-/**
- * Função para remover acentos e padronizar textos
- */
 function normalizarTexto(texto) {
   return String(texto || "")
     .normalize("NFD")
@@ -43,7 +40,7 @@ function normalizarTexto(texto) {
 }
 
 /**
- * 1. LEITURA APRIMORADA DE ARQUIVOS (XLSX, XLS E CSV)
+ * 1. LEITURA APONTADA PARA A COLUNA W (ÍNDICE 22)
  */
 function carregarArquivoExcel(event) {
   const file = event.target.files[0];
@@ -72,30 +69,28 @@ function carregarArquivoExcel(event) {
         return;
       }
 
-      // Mapeia o cabeçalho
       const cabecalho = jsonMatriz[0].map(c => normalizarTexto(c));
       const linhas = jsonMatriz.slice(1);
 
-      // Localiza dinamicamente o índice das colunas
+      // Coluna W no Excel equivale ao índice 22 em arrays (A=0, B=1 ... W=22)
+      const idxStatus = 22; 
+      
+      // Busca a cidade e a data dinamicamente ou por padrão (C=2 para cidade, V=21 para data)
       let idxCidade = cabecalho.findIndex(c => c.includes("CIDADE") || c.includes("MUNIC"));
-      let idxData = cabecalho.findIndex(c => c.includes("DATA") || c.includes("AGEND") || c.includes("PREV") || c.includes("CRIADO"));
-      let idxStatus = cabecalho.findIndex(c => c.includes("STATUS") || c.includes("SITUAC") || c.includes("ETAPA") || c.includes("FASE"));
+      let idxData = cabecalho.findIndex(c => c.includes("DATA") || c.includes("AGEND") || c.includes("PREV"));
 
-      // Fallbacks caso não encontre pelos termos
       if (idxCidade === -1) idxCidade = 2;
-      if (idxData === -1) idxData = 0;
-      if (idxStatus === -1) idxStatus = 1;
+      if (idxData === -1) idxData = 21;
 
       baseDadosGlobal = linhas.map((linha, index) => {
-        const statusValor = normalizarTexto(linha[idxStatus]);
-        const cidadeValor = normalizarTexto(linha[idxCidade]);
-        const dataValor = formatarDataIso(linha[idxData]);
-
+        const statusOriginal = String(linha[idxStatus] || "").trim().toUpperCase();
+        
         return {
           id: linha[0] || `PED-${index + 1}`,
-          cidade: cidadeValor,
-          data: dataValor,
-          status: statusValor
+          cidade: normalizarTexto(linha[idxCidade]),
+          data: formatarDataIso(linha[idxData]),
+          statusRaw: statusOriginal,
+          status: normalizarTexto(statusOriginal)
         };
       }).filter(item => item.cidade || item.status);
 
@@ -115,7 +110,7 @@ function carregarArquivoExcel(event) {
 }
 
 /**
- * 2. FILTRAGEM ROBUSTA DE DADOS
+ * 2. FILTRAGEM COMPATÍVEL COM OS STATUS DA COLUNA W
  */
 function aplicarFiltrosEAtualizar() {
   const statusFiltro = document.getElementById("statusFilter")?.value || "TODOS";
@@ -123,27 +118,27 @@ function aplicarFiltrosEAtualizar() {
   const dataFim = document.getElementById("endDate")?.value;
 
   const dadosFiltrados = baseDadosGlobal.filter(item => {
-    const st = item.status;
+    const st = item.status; // Status normalizado sem acentos
     let atendeStatus = false;
 
     switch (statusFiltro) {
       case "AGENDADO_COLETADO":
-        atendeStatus = /AGEND|COLET/.test(st);
+        atendeStatus = (st === "AGENDADO" || st === "COLETADO");
         break;
       case "AGENDADO":
-        atendeStatus = /AGEND/.test(st);
+        atendeStatus = (st === "AGENDADO");
         break;
       case "COLETADO":
-        atendeStatus = /COLET/.test(st);
-        break;
-      case "FINALIZADO":
-        atendeStatus = /FINALIZ|CONCLU|ENCERR|ATEND|ENTREG/.test(st);
+        atendeStatus = (st === "COLETADO");
         break;
       case "ENTREGUE":
-        atendeStatus = /ENTREG/.test(st);
+        atendeStatus = (st === "ENTREGUE");
+        break;
+      case "FINALIZADO":
+        atendeStatus = (st === "FINALIZADO");
         break;
       case "PROGRAMADO":
-        atendeStatus = /PROGRAM/.test(st);
+        atendeStatus = (st === "PROGRAMADO");
         break;
       case "TODOS":
       default:
@@ -179,9 +174,9 @@ function processarDadosLogistica(dados) {
   };
 
   dados.forEach(item => {
-    if (item.status.includes("COLET")) resumo.coletas++;
-    else if (item.status.includes("RECEB")) resumo.recebimentos++;
-    else if (/ENTREG|FINALIZ|CONCLU/.test(item.status)) resumo.entregas++;
+    if (item.status === "COLETADO") resumo.coletas++;
+    else if (item.status === "PENDENTE DE CONFERENCIA") resumo.recebimentos++;
+    else if (item.status === "ENTREGUE" || item.status === "FINALIZADO") resumo.entregas++;
     else resumo.outrosTipos++;
 
     if (CIDADES_SP_ABC.includes(item.cidade)) resumo.regioes.spAbc++;
@@ -211,9 +206,9 @@ function renderizarKPIs(resumo) {
       <small>Operações de Coleta</small>
     </div>
     <div class="kpi-card">
-      <span>Recebimentos</span>
+      <span>Recebimentos / Conf.</span>
       <strong>${resumo.recebimentos}</strong>
-      <small>Entradas no CD</small>
+      <small>Pendente de Conferência</small>
     </div>
     <div class="kpi-card">
       <span>Entregas / Finalizados</span>
@@ -276,7 +271,7 @@ function renderizarGraficos(resumo, dados) {
     chartTipoInstance = new Chart(ctxTipo, {
       type: "bar",
       data: {
-        labels: ["Coletas", "Recebimentos", "Entregas/Finalizados", "Outros"],
+        labels: ["Coletas", "Pend. Conferência", "Entregas/Finalizados", "Outros"],
         datasets: [{
           label: "Volume de Pedidos",
           data: [resumo.coletas, resumo.recebimentos, resumo.entregas, resumo.outrosTipos],
@@ -297,7 +292,7 @@ function renderizarTabelaAgenda(dados) {
     const dataChave = item.data || "Sem Data Agendada";
     if (!agenda[dataChave]) agenda[dataChave] = { qtd: 0, statusSet: new Set() };
     agenda[dataChave].qtd++;
-    if (item.status) agenda[dataChave].statusSet.add(item.status);
+    if (item.statusRaw) agenda[dataChave].statusSet.add(item.statusRaw);
   });
 
   const datasOrdenadas = Object.keys(agenda).sort();
@@ -312,7 +307,7 @@ function renderizarTabelaAgenda(dados) {
 }
 
 /**
- * 5. UTILS DE FORMATAR DATA
+ * 5. UTILS
  */
 function limparFiltrosDatas() {
   document.getElementById("startDate").value = "";
@@ -325,15 +320,11 @@ function formatarDataIso(valor) {
   if (!valor) return "";
   if (typeof valor === "number") {
     const dateObj = XLSX.SSF.parse_date_code(valor);
-    if (dateObj) {
-      return `${dateObj.y}-${String(dateObj.m).padStart(2, '0')}-${String(dateObj.d).padStart(2, '0')}`;
-    }
+    if (dateObj) return `${dateObj.y}-${String(dateObj.m).padStart(2, '0')}-${String(dateObj.d).padStart(2, '0')}`;
   }
-  
   const str = String(valor).trim();
   if (str.match(/^\d{4}-\d{2}-\d{2}/)) return str.substring(0, 10);
   
-  // Trata formato DD/MM/YYYY ou DD-MM-YYYY
   const matchPt = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
   if (matchPt) {
     const d = matchPt[1].padStart(2, '0');
@@ -341,7 +332,6 @@ function formatarDataIso(valor) {
     const y = matchPt[3];
     return `${y}-${m}-${d}`;
   }
-  
   return "";
 }
 
