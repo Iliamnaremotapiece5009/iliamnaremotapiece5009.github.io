@@ -1,402 +1,2616 @@
 /**
- * Dashboard Operacional - Lógica e Integração DOM / Chart.js / SheetJS
- */
 
-let chartRegiaoInstance = null;
-let chartTipoInstance = null;
-let baseDadosGlobal = [];
+* ============================================================
+* DASHBOARD OPERACIONAL
+* ============================================================
+*
+* COLUNAS PRINCIPAIS DA BASE:
+*
+* V = DATA DE AGENDAMENTO
+* W = STATUS
+*
+* PEDIDO_   = Número do pedido
+* CIDADE    = Cidade
+* TIPO      = Tipo da operação
+* FORNECEDOR = Fornecedor
+*
+* ============================================================
+  */
 
-const CIDADES_SP_ABC = [
-  "SAO PAULO", "SANTO ANDRE", "SAO BERNARDO DO CAMPO", 
-  "DIADEMA", "MAUA", "OSASCO", "GUARULHOS"
-];
+const COLUNA_DATA = 21;      // V
+const COLUNA_STATUS = 22;    // W
 
-const CIDADES_JAGUARIUNA_ENTORNO = [
-  "JAGUARIUNA", "CAMPINAS", "HOLAMBRA", "AMPARO", 
-  "PEDREIRA", "MOGI MIRIM", "MOGI GUACU", "PAULINIA", 
-  "SERRA NEGRA", "ITAPIRA"
-];
+const COLUNA_PEDIDO = "PEDIDO_";
+const COLUNA_CIDADE = "CIDADE";
+const COLUNA_TIPO = "TIPO";
+const COLUNA_FORNECEDOR = "FORNECEDOR";
 
-document.addEventListener("DOMContentLoaded", () => {
-  const fileInput = document.getElementById("excelFile");
-  const statusFilter = document.getElementById("statusFilter");
-  const startDate = document.getElementById("startDate");
-  const endDate = document.getElementById("endDate");
-  const btnClear = document.getElementById("btnClear");
+/* ============================================================
+VARIÁVEIS
+============================================================ */
 
-  if (fileInput) fileInput.addEventListener("change", carregarArquivoExcel);
-  if (statusFilter) statusFilter.addEventListener("change", aplicarFiltrosEAtualizar);
-  if (startDate) startDate.addEventListener("change", aplicarFiltrosEAtualizar);
-  if (endDate) endDate.addEventListener("change", aplicarFiltrosEAtualizar);
-  if (btnClear) btnClear.addEventListener("click", limparFiltrosDatas);
+let rawData = [];
+let pedidosConsolidados = [];
+
+let instanceChartRegiao = null;
+let instanceChartTipo = null;
+
+/* ============================================================
+INICIALIZAÇÃO
+============================================================ */
+
+document.addEventListener("DOMContentLoaded", function () {
+
+```
+const fileInput = document.getElementById("excelFile");
+const statusFilter = document.getElementById("statusFilter");
+const regionFilter = document.getElementById("regionFilter");
+const startDate = document.getElementById("startDate");
+const endDate = document.getElementById("endDate");
+const btnClear = document.getElementById("btnClear");
+
+if (fileInput) {
+    fileInput.addEventListener(
+        "change",
+        carregarArquivo
+    );
+}
+
+if (statusFilter) {
+    statusFilter.addEventListener(
+        "change",
+        processarEAtualizar
+    );
+}
+
+if (regionFilter) {
+    regionFilter.addEventListener(
+        "change",
+        processarEAtualizar
+    );
+}
+
+if (startDate) {
+    startDate.addEventListener(
+        "change",
+        processarEAtualizar
+    );
+}
+
+if (endDate) {
+    endDate.addEventListener(
+        "change",
+        processarEAtualizar
+    );
+}
+
+if (btnClear) {
+    btnClear.addEventListener(
+        "click",
+        limparFiltros
+    );
+}
+
+if (typeof ChartDataLabels !== "undefined") {
+    Chart.register(ChartDataLabels);
+}
+```
+
 });
 
-function normalizarTexto(texto) {
-  return String(texto || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+/* ============================================================
+NORMALIZAR TEXTO
+============================================================ */
+
+function normalizarTexto(valor) {
+
+```
+if (
+    valor === undefined ||
+    valor === null
+) {
+    return "";
+}
+
+return String(valor)
+    .trim()
     .toUpperCase()
-    .trim();
+    .normalize("NFD")
+    .replace(
+        /[\u0300-\u036f]/g,
+        ""
+    );
+```
+
 }
 
-/**
- * 1. LEITURA APONTADA PARA A COLUNA W (ÍNDICE 22)
- */
-function carregarArquivoExcel(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+/* ============================================================
+LOCALIZAR COLUNA PELO NOME
+============================================================ */
 
-  const isCsv = file.name.toLowerCase().endsWith('.csv');
-  const reader = new FileReader();
+function encontrarColuna(objeto, nomeProcurado) {
 
-  reader.onload = function (e) {
-    try {
-      let workbook;
-      if (isCsv) {
-        const csvContent = e.target.result;
-        workbook = XLSX.read(csvContent, { type: "string", raw: true });
-      } else {
-        const data = new Uint8Array(e.target.result);
-        workbook = XLSX.read(data, { type: "array" });
-      }
+```
+const alvo =
+    normalizarTexto(nomeProcurado);
 
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      const jsonMatriz = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+return Object.keys(objeto).find(
+    function (chave) {
 
-      if (!jsonMatriz || jsonMatriz.length <= 1) {
-        alert("A planilha selecionada está vazia ou não possui linhas suficientes.");
-        return;
-      }
+        return (
+            normalizarTexto(chave) ===
+            alvo
+        );
 
-      const cabecalho = jsonMatriz[0].map(c => normalizarTexto(c));
-      const linhas = jsonMatriz.slice(1);
-
-      // Coluna W no Excel equivale ao índice 22 em arrays (A=0, B=1 ... W=22)
-      const idxStatus = 22; 
-      
-      let idxCidade = cabecalho.findIndex(c => c.includes("CIDADE") || c.includes("MUNIC"));
-      let idxData = cabecalho.findIndex(c => c.includes("DATA") || c.includes("AGEND") || c.includes("PREV"));
-
-      if (idxCidade === -1) idxCidade = 2;
-      if (idxData === -1) idxData = 21;
-
-      baseDadosGlobal = linhas.map((linha, index) => {
-        const statusOriginal = String(linha[idxStatus] || "").trim();
-        
-        return {
-          id: linha[0] || `PED-${index + 1}`,
-          cidade: normalizarTexto(linha[idxCidade]),
-          data: formatarDataIso(linha[idxData]),
-          statusRaw: statusOriginal,
-          statusNorm: normalizarTexto(statusOriginal)
-        };
-      }).filter(item => item.cidade || item.statusNorm);
-
-      aplicarFiltrosEAtualizar();
-
-    } catch (erro) {
-      console.error("Erro ao processar o arquivo:", erro);
-      alert("Houve um erro ao ler o arquivo CSV/Excel.");
     }
-  };
+);
+```
 
-  if (isCsv) {
-    reader.readAsText(file, "UTF-8");
-  } else {
-    reader.readAsArrayBuffer(file);
-  }
 }
 
-/**
- * 2. FILTRAGEM DE ACORDO COM O STATUS DA COLUNA W
- */
-function aplicarFiltrosEAtualizar() {
-  const statusFiltro = document.getElementById("statusFilter")?.value || "TODOS";
-  const dataInicio = document.getElementById("startDate")?.value;
-  const dataFim = document.getElementById("endDate")?.value;
+/* ============================================================
+LEITURA DO ARQUIVO
+============================================================ */
 
-  const dadosFiltrados = baseDadosGlobal.filter(item => {
-    const st = item.statusNorm;
-    let atendeStatus = false;
+function carregarArquivo(event) {
 
-    switch (statusFiltro) {
-      case "AGENDADO_COLETADO":
-        atendeStatus = (st === "AGENDADO" || st === "COLETADO");
-        break;
-      case "AGENDADO":
-        atendeStatus = (st === "AGENDADO");
-        break;
-      case "COLETADO":
-        atendeStatus = (st === "COLETADO");
-        break;
-      case "ENTREGUE":
-        atendeStatus = (st === "ENTREGUE");
-        break;
-      case "FINALIZADO":
-        atendeStatus = (st === "FINALIZADO");
-        break;
-      case "PENDENTE_CONFERENCIA":
-      case "PENDENTE DE CONFERENCIA":
-        atendeStatus = (st.includes("PENDENTE") || st.includes("CONFERENCIA"));
-        break;
-      case "PROGRAMADO":
-        atendeStatus = (st === "PROGRAMADO");
-        break;
-      case "TODOS":
-      default:
-        atendeStatus = true;
-        break;
+```
+const file =
+    event.target.files[0];
+
+if (!file) {
+    return;
+}
+
+const reader =
+    new FileReader();
+
+reader.onload =
+    function (evt) {
+
+        try {
+
+            const data =
+                new Uint8Array(
+                    evt.target.result
+                );
+
+            const workbook =
+                XLSX.read(
+                    data,
+                    {
+                        type: "array",
+                        cellDates: true
+                    }
+                );
+
+            const primeiraAba =
+                workbook.SheetNames[0];
+
+            const worksheet =
+                workbook.Sheets[
+                    primeiraAba
+                ];
+
+            rawData =
+                XLSX.utils.sheet_to_json(
+                    worksheet,
+                    {
+                        raw: true,
+                        defval: ""
+                    }
+                );
+
+            if (
+                !rawData ||
+                rawData.length === 0
+            ) {
+
+                alert(
+                    "A planilha selecionada está vazia."
+                );
+
+                return;
+            }
+
+
+            /*
+             * Busca V = Data
+             * W = Status
+             */
+
+            rawData =
+                rawData.map(
+                    function (item, index) {
+
+                        const celulaData =
+                            worksheet[
+                                XLSX.utils.encode_cell({
+                                    r: index + 1,
+                                    c: COLUNA_DATA
+                                })
+                            ];
+
+                        const celulaStatus =
+                            worksheet[
+                                XLSX.utils.encode_cell({
+                                    r: index + 1,
+                                    c: COLUNA_STATUS
+                                })
+                            ];
+
+                        return {
+
+                            ...item,
+
+                            DATA_V:
+                                celulaData
+                                    ? celulaData.v
+                                    : "",
+
+                            STATUS_W:
+                                celulaStatus
+                                    ? celulaStatus.v
+                                    : "",
+
+                            LINHA_ORIGINAL:
+                                index + 2
+
+                        };
+
+                    }
+                );
+
+
+            montarFiltroStatus();
+
+            processarEAtualizar();
+
+        }
+        catch (erro) {
+
+            console.error(
+                "Erro ao ler arquivo:",
+                erro
+            );
+
+            alert(
+                "Erro ao ler a planilha.\n\n" +
+                "Verifique se o arquivo é um XLSX, XLS ou CSV válido."
+            );
+
+        }
+
+    };
+
+reader.readAsArrayBuffer(file);
+```
+
+}
+
+/* ============================================================
+FILTRO DE STATUS
+============================================================ */
+
+function montarFiltroStatus() {
+
+```
+const select =
+    document.getElementById(
+        "statusFilter"
+    );
+
+if (!select) {
+    return;
+}
+
+const statusEncontrados = [];
+
+
+rawData.forEach(
+    function (item) {
+
+        const status =
+            normalizarTexto(
+                item.STATUS_W
+            );
+
+        if (
+            status &&
+            !statusEncontrados.includes(
+                status
+            )
+        ) {
+
+            statusEncontrados.push(
+                status
+            );
+
+        }
+
     }
+);
 
-    let atendeData = true;
-    if (dataInicio && item.data) atendeData = atendeData && item.data >= dataInicio;
-    if (dataFim && item.data) atendeData = atendeData && item.data <= dataFim;
 
-    return atendeStatus && atendeData;
-  });
+statusEncontrados.sort();
 
-  const resumo = processarDadosLogistica(dadosFiltrados);
-  renderizarKPIs(resumo);
-  renderizarPainelRegioes(resumo);
-  renderizarGraficos(resumo, dadosFiltrados);
-  renderizarTabelaAgenda(dadosFiltrados);
-}
 
-/**
- * 3. PROCESSAMENTO EXATO DE TODOS OS STATUS
+/*
+ * Mantém somente:
+ *
+ * TODOS
+ * AGENDADO
+ * COLETADO
+ * ENTREGUE
+ * FINALIZADO
+ * PENDENTE DE CONFERÊNCIA
+ * PROGRAMADO
+ *
+ * Não existe mais:
+ * AGENDADO E COLETADO
  */
-function processarDadosLogistica(dados) {
-  let resumo = {
-    totalPedidos: dados.length,
-    agendados: 0,
-    coletas: 0,
-    entregas: 0,
-    finalizados: 0,
-    pendentesConferencia: 0,
-    programados: 0,
-    regioes: { spAbc: 0, jaguariunaEntorno: 0, outras: 0 }
-  };
 
-  dados.forEach(item => {
-    const st = item.statusNorm;
+select.innerHTML = "";
 
-    if (st === "AGENDADO") resumo.agendados++;
-    else if (st === "COLETADO") resumo.coletas++;
-    else if (st === "ENTREGUE") resumo.entregas++;
-    else if (st === "FINALIZADO") resumo.finalizados++;
-    else if (st.includes("PENDENTE") || st.includes("CONFERENCIA")) resumo.pendentesConferencia++;
-    else if (st === "PROGRAMADO") resumo.programados++;
 
-    if (CIDADES_SP_ABC.includes(item.cidade)) resumo.regioes.spAbc++;
-    else if (CIDADES_JAGUARIUNA_ENTORNO.includes(item.cidade)) resumo.regioes.jaguariunaEntorno++;
-    else resumo.regioes.outras++;
-  });
+const todos =
+    document.createElement(
+        "option"
+    );
 
-  return resumo;
+todos.value =
+    "TODOS";
+
+todos.textContent =
+    "Todos os Status";
+
+todos.selected =
+    true;
+
+select.appendChild(
+    todos
+);
+
+
+const ordemStatus = [
+    "AGENDADO",
+    "COLETADO",
+    "ENTREGUE",
+    "FINALIZADO",
+    "PENDENTE DE CONFERENCIA",
+    "PROGRAMADO"
+];
+
+
+ordemStatus.forEach(
+    function (statusDesejado) {
+
+        const encontrado =
+            statusEncontrados.find(
+                function (status) {
+
+                    if (
+                        statusDesejado ===
+                        "PENDENTE DE CONFERENCIA"
+                    ) {
+
+                        return (
+                            status.includes("PENDENTE") ||
+                            status.includes("CONFERENCIA")
+                        );
+
+                    }
+
+                    return (
+                        status ===
+                        statusDesejado
+                    );
+
+                }
+            );
+
+
+        if (encontrado) {
+
+            const option =
+                document.createElement(
+                    "option"
+                );
+
+            option.value =
+                statusDesejado;
+
+            option.textContent =
+                statusDesejado;
+
+            select.appendChild(
+                option
+            );
+
+        }
+
+    }
+);
+```
+
 }
 
-/**
- * 4. RENDERIZAÇÃO NA INTERFACE (DOM)
+/* ============================================================
+CLASSIFICAÇÃO REGIONAL
+============================================================ */
+
+function classificarRegiao(cidade) {
+
+```
+const c =
+    normalizarTexto(
+        cidade
+    );
+
+
+/*
+ * SÃO PAULO / ABC
  */
-function renderizarKPIs(resumo) {
-  const container = document.getElementById("painelKPIs");
-  if (!container) return;
 
-  container.innerHTML = `
-    <div class="kpi-card">
-      <span>Total de Pedidos</span>
-      <strong>${resumo.totalPedidos}</strong>
-      <small>Base filtrada</small>
-    </div>
-    <div class="kpi-card">
-      <span>Agendados / Programados</span>
-      <strong>${resumo.agendados + resumo.programados}</strong>
-      <small>Agend: ${resumo.agendados} | Prog: ${resumo.programados}</small>
-    </div>
-    <div class="kpi-card">
-      <span>Coletas / Pendentes</span>
-      <strong>${resumo.coletas + resumo.pendentesConferencia}</strong>
-      <small>Colet: ${resumo.coletas} | Conf: ${resumo.pendentesConferencia}</small>
-    </div>
-    <div class="kpi-card">
-      <span>Entregues / Finalizados</span>
-      <strong>${resumo.entregas + resumo.finalizados}</strong>
-      <small>Entr: ${resumo.entregas} | Fin: ${resumo.finalizados}</small>
-    </div>
-  `;
+const saoPauloABC = [
+
+    "SAO PAULO",
+    "SANTO ANDRE",
+    "SAO BERNARDO DO CAMPO",
+    "SAO CAETANO DO SUL",
+    "DIADEMA",
+    "MAUA",
+    "RIBEIRAO PIRES",
+    "RIO GRANDE DA SERRA"
+
+];
+
+
+if (
+    saoPauloABC.includes(c)
+) {
+
+    return "SAO_PAULO_ABC";
+
 }
 
-function renderizarPainelRegioes(resumo) {
-  const container = document.getElementById("painelRegioes");
-  if (!container) return;
 
-  const total = resumo.totalPedidos || 1;
-  const pctSp = ((resumo.regioes.spAbc / total) * 100).toFixed(1);
-  const pctJag = ((resumo.regioes.jaguariunaEntorno / total) * 100).toFixed(1);
-  const pctOutras = ((resumo.regioes.outras / total) * 100).toFixed(1);
+/*
+ * JAGUARIÚNA / ENTORNO
+ */
 
-  container.innerHTML = `
+const jaguariunaEntorno = [
+
+    "JAGUARIUNA",
+    "CAMPINAS",
+    "HOLAMBRA",
+    "PEDREIRA",
+    "AMPARO",
+    "SANTO ANTONIO DE POSSE",
+    "MOGI MIRIM",
+    "MOGI GUACU",
+    "PAULINIA",
+    "VALINHOS",
+    "VINHEDO",
+    "ARTUR NOGUEIRA",
+    "COSMOPOLIS",
+    "MORUNGABA",
+    "ITATIBA",
+    "MONTE ALEGRE DO SUL",
+    "PINHALZINHO",
+    "SERRA NEGRA",
+    "LINDOIA",
+    "AGUAS DE LINDOIA"
+
+];
+
+
+if (
+    jaguariunaEntorno.includes(c)
+) {
+
+    return "JAGUARIUNA_ENTORNO";
+
+}
+
+
+return "OUTRAS_REGIOES";
+```
+
+}
+
+/* ============================================================
+NOME DA REGIÃO
+============================================================ */
+
+function nomeRegiao(regiao) {
+
+```
+switch (regiao) {
+
+    case "SAO_PAULO_ABC":
+        return "São Paulo / ABC";
+
+    case "JAGUARIUNA_ENTORNO":
+        return "Jaguariúna / Entorno";
+
+    case "OUTRAS_REGIOES":
+        return "Outras Regiões";
+
+    default:
+        return "Não informado";
+
+}
+```
+
+}
+
+/* ============================================================
+PEGAR PEDIDO
+============================================================ */
+
+function obterPedido(item) {
+
+```
+const chave =
+    encontrarColuna(
+        item,
+        COLUNA_PEDIDO
+    );
+
+if (
+    chave &&
+    item[chave] !== undefined &&
+    item[chave] !== null
+) {
+
+    return String(
+        item[chave]
+    ).trim();
+
+}
+
+/*
+ * Tenta PEDIDO sem _
+ */
+
+const chavePedido =
+    Object.keys(item).find(
+        function (key) {
+
+            const nome =
+                normalizarTexto(
+                    key
+                );
+
+            return (
+                nome === "PEDIDO" ||
+                nome === "PEDIDO_"
+            );
+
+        }
+    );
+
+
+if (chavePedido) {
+
+    return String(
+        item[chavePedido] || ""
+    ).trim();
+
+}
+
+
+return "";
+```
+
+}
+
+/* ============================================================
+PEGAR CIDADE
+============================================================ */
+
+function obterCidade(item) {
+
+```
+const chave =
+    encontrarColuna(
+        item,
+        COLUNA_CIDADE
+    );
+
+return chave
+    ? String(
+        item[chave] || ""
+    ).trim()
+    : "";
+```
+
+}
+
+/* ============================================================
+PEGAR TIPO
+============================================================ */
+
+function obterTipo(item) {
+
+```
+const chave =
+    encontrarColuna(
+        item,
+        COLUNA_TIPO
+    );
+
+return chave
+    ? String(
+        item[chave] || ""
+    ).trim()
+    : "";
+```
+
+}
+
+/* ============================================================
+PEGAR FORNECEDOR
+============================================================ */
+
+function obterFornecedor(item) {
+
+```
+const chave =
+    encontrarColuna(
+        item,
+        COLUNA_FORNECEDOR
+    );
+
+if (chave) {
+
+    return String(
+        item[chave] || ""
+    ).trim();
+
+}
+
+
+/*
+ * Procura variações
+ */
+
+const chaveFornecedor =
+    Object.keys(item).find(
+        function (key) {
+
+            const nome =
+                normalizarTexto(
+                    key
+                );
+
+            return (
+                nome.includes(
+                    "FORNECEDOR"
+                )
+            );
+
+        }
+    );
+
+
+if (chaveFornecedor) {
+
+    return String(
+        item[chaveFornecedor] || ""
+    ).trim();
+
+}
+
+
+return "Não informado";
+```
+
+}
+
+/* ============================================================
+CONSOLIDAR PEDIDOS
+============================================================ */
+
+function consolidarPedidos(dados) {
+
+```
+const mapa = {};
+
+
+dados.forEach(
+    function (item, index) {
+
+        let pedido =
+            obterPedido(item);
+
+
+        if (!pedido) {
+
+            pedido =
+                "LINHA_" +
+                item.LINHA_ORIGINAL ||
+                index;
+
+        }
+
+
+        if (!mapa[pedido]) {
+
+            mapa[pedido] = {
+
+                pedido:
+                    pedido,
+
+                cidade:
+                    obterCidade(item),
+
+                tipo:
+                    obterTipo(item),
+
+                fornecedor:
+                    obterFornecedor(item),
+
+                data:
+                    item.DATA_V,
+
+                status:
+                    item.STATUS_W,
+
+                regiao:
+                    classificarRegiao(
+                        obterCidade(item)
+                    ),
+
+                quantidadeLinhas:
+                    1,
+
+                linhas:
+                    [item]
+
+            };
+
+        }
+        else {
+
+            const registro =
+                mapa[pedido];
+
+            registro.quantidadeLinhas++;
+
+            registro.linhas.push(
+                item
+            );
+
+
+            if (
+                !registro.cidade
+            ) {
+
+                registro.cidade =
+                    obterCidade(item);
+
+            }
+
+
+            if (
+                !registro.tipo
+            ) {
+
+                registro.tipo =
+                    obterTipo(item);
+
+            }
+
+
+            if (
+                !registro.fornecedor
+            ) {
+
+                registro.fornecedor =
+                    obterFornecedor(item);
+
+            }
+
+        }
+
+    }
+);
+
+
+return Object.values(
+    mapa
+);
+```
+
+}
+
+/* ============================================================
+PROCESSAMENTO PRINCIPAL
+============================================================ */
+
+function processarEAtualizar() {
+
+```
+if (
+    !rawData ||
+    rawData.length === 0
+) {
+
+    return;
+
+}
+
+
+const filtroStatus =
+    document.getElementById(
+        "statusFilter"
+    )?.value ||
+    "TODOS";
+
+
+const filtroRegiao =
+    document.getElementById(
+        "regionFilter"
+    )?.value ||
+    "TODAS";
+
+
+const dataInicial =
+    document.getElementById(
+        "startDate"
+    )?.value ||
+    "";
+
+
+const dataFinal =
+    document.getElementById(
+        "endDate"
+    )?.value ||
+    "";
+
+
+const timestampInicial =
+    dataInicial
+        ? obterTimestampZerado(
+            dataInicial
+        )
+        : null;
+
+
+const timestampFinal =
+    dataFinal
+        ? obterTimestampZerado(
+            dataFinal
+        )
+        : null;
+
+
+const dadosFiltrados =
+    rawData.filter(
+        function (item) {
+
+            const status =
+                normalizarTexto(
+                    item.STATUS_W
+                );
+
+
+            /*
+             * STATUS
+             */
+
+            if (
+                filtroStatus !==
+                "TODOS"
+            ) {
+
+                if (
+                    filtroStatus ===
+                    "PENDENTE DE CONFERENCIA" ||
+                    filtroStatus ===
+                    "PENDENTE_DE_CONFERENCIA"
+                ) {
+
+                    if (
+                        !status.includes(
+                            "PENDENTE"
+                        ) &&
+                        !status.includes(
+                            "CONFERENCIA"
+                        )
+                    ) {
+
+                        return false;
+
+                    }
+
+                }
+                else {
+
+                    if (
+                        status !==
+                        normalizarTexto(
+                            filtroStatus
+                        )
+                    ) {
+
+                        return false;
+
+                    }
+
+                }
+
+            }
+
+
+            /*
+             * REGIÃO
+             */
+
+            if (
+                filtroRegiao !==
+                "TODAS"
+            ) {
+
+                const regiao =
+                    classificarRegiao(
+                        obterCidade(item)
+                    );
+
+                if (
+                    regiao !==
+                    filtroRegiao
+                ) {
+
+                    return false;
+
+                }
+
+            }
+
+
+            /*
+             * DATA
+             */
+
+            if (
+                timestampInicial !== null ||
+                timestampFinal !== null
+            ) {
+
+                const timestampItem =
+                    obterTimestampZerado(
+                        item.DATA_V
+                    );
+
+
+                if (
+                    timestampItem === null
+                ) {
+
+                    return false;
+
+                }
+
+
+                if (
+                    timestampInicial !== null &&
+                    timestampItem <
+                    timestampInicial
+                ) {
+
+                    return false;
+
+                }
+
+
+                if (
+                    timestampFinal !== null &&
+                    timestampItem >
+                    timestampFinal
+                ) {
+
+                    return false;
+
+                }
+
+            }
+
+
+            return true;
+
+        }
+    );
+
+
+pedidosConsolidados =
+    consolidarPedidos(
+        dadosFiltrados
+    );
+
+
+atualizarKPIs(
+    pedidosConsolidados
+);
+
+
+atualizarDistribuicaoRegional(
+    pedidosConsolidados
+);
+
+
+atualizarGraficoCidades(
+    pedidosConsolidados
+);
+
+
+atualizarGraficoTipos(
+    pedidosConsolidados
+);
+
+
+atualizarTabelaDatas(
+    dadosFiltrados
+);
+```
+
+}
+
+/* ============================================================
+KPIs
+============================================================ */
+
+function atualizarKPIs(pedidos) {
+
+```
+const total =
+    pedidos.length;
+
+let agendados = 0;
+let coletas = 0;
+let entregas = 0;
+let finalizados = 0;
+let pendentes = 0;
+let programados = 0;
+
+
+pedidos.forEach(
+    function (pedido) {
+
+        const status =
+            normalizarTexto(
+                pedido.status
+            );
+
+
+        if (
+            status ===
+            "AGENDADO"
+        ) {
+
+            agendados++;
+
+        }
+        else if (
+            status ===
+            "COLETADO"
+        ) {
+
+            coletas++;
+
+        }
+        else if (
+            status ===
+            "ENTREGUE"
+        ) {
+
+            entregas++;
+
+        }
+        else if (
+            status ===
+            "FINALIZADO"
+        ) {
+
+            finalizados++;
+
+        }
+        else if (
+            status.includes(
+                "PENDENTE"
+            ) ||
+            status.includes(
+                "CONFERENCIA"
+            )
+        ) {
+
+            pendentes++;
+
+        }
+        else if (
+            status ===
+            "PROGRAMADO"
+        ) {
+
+            programados++;
+
+        }
+
+    }
+);
+
+
+const painel =
+    document.getElementById(
+        "painelKPIs"
+    );
+
+if (!painel) {
+    return;
+}
+
+
+painel.innerHTML = `
+
+    <div class="kpi-card">
+
+        <span>
+            TOTAL DE PEDIDOS
+        </span>
+
+        <strong>
+            ${total}
+        </strong>
+
+        <small>
+            Base filtrada
+        </small>
+
+    </div>
+
+
+    <div class="kpi-card">
+
+        <span>
+            AGENDADOS
+        </span>
+
+        <strong>
+            ${agendados}
+        </strong>
+
+        <small>
+            ${percentual(
+                agendados,
+                total
+            )}
+        </small>
+
+    </div>
+
+
+    <div class="kpi-card">
+
+        <span>
+            COLETADOS
+        </span>
+
+        <strong>
+            ${coletas}
+        </strong>
+
+        <small>
+            ${percentual(
+                coletas,
+                total
+            )}
+        </small>
+
+    </div>
+
+
+    <div class="kpi-card">
+
+        <span>
+            ENTREGUES / FINALIZADOS
+        </span>
+
+        <strong>
+            ${entregas + finalizados}
+        </strong>
+
+        <small>
+            Entregues: ${entregas}
+            |
+            Finalizados: ${finalizados}
+        </small>
+
+    </div>
+
+`;
+```
+
+}
+
+/* ============================================================
+PERCENTUAL
+============================================================ */
+
+function percentual(valor, total) {
+
+```
+if (!total) {
+    return "0.0%";
+}
+
+return (
+    (
+        valor /
+        total
+    ) *
+    100
+).toFixed(1) +
+"%";
+```
+
+}
+
+/* ============================================================
+DISTRIBUIÇÃO REGIONAL
+============================================================ */
+
+function atualizarDistribuicaoRegional(
+pedidos
+) {
+
+```
+const painel =
+    document.getElementById(
+        "painelRegioes"
+    );
+
+if (!painel) {
+    return;
+}
+
+
+const total =
+    pedidos.length;
+
+
+let saoPaulo = 0;
+let jaguariuna = 0;
+let outras = 0;
+
+
+pedidos.forEach(
+    function (pedido) {
+
+        if (
+            pedido.regiao ===
+            "SAO_PAULO_ABC"
+        ) {
+
+            saoPaulo++;
+
+        }
+        else if (
+            pedido.regiao ===
+            "JAGUARIUNA_ENTORNO"
+        ) {
+
+            jaguariuna++;
+
+        }
+        else {
+
+            outras++;
+
+        }
+
+    }
+);
+
+
+painel.innerHTML = `
+
     <div class="card">
-      <h3>Distribuição por Região Geográfica</h3>
-      <div class="regiao-linha">
-        <span>São Paulo / Grande ABC</span>
-        <div>${resumo.regioes.spAbc} <span>(${pctSp}%)</span></div>
-      </div>
-      <div class="regiao-linha">
-        <span>Jaguariúna e Entorno</span>
-        <div>${resumo.regioes.jaguariunaEntorno} <span>(${pctJag}%)</span></div>
-      </div>
-      <div class="regiao-linha">
-        <span>Demais Regiões</span>
-        <div>${resumo.regioes.outras} <span>(${pctOutras}%)</span></div>
-      </div>
+
+        <h3>
+            Distribuição Regional
+        </h3>
+
+
+        <div class="regiao-linha">
+
+            <span>
+                São Paulo / ABC
+            </span>
+
+            <div>
+
+                <strong>
+                    ${saoPaulo}
+                </strong>
+
+                <small>
+                    ${percentual(
+                        saoPaulo,
+                        total
+                    )}
+                </small>
+
+            </div>
+
+        </div>
+
+
+        <div class="regiao-linha">
+
+            <span>
+                Jaguariúna / Entorno
+            </span>
+
+            <div>
+
+                <strong>
+                    ${jaguariuna}
+                </strong>
+
+                <small>
+                    ${percentual(
+                        jaguariuna,
+                        total
+                    )}
+                </small>
+
+            </div>
+
+        </div>
+
+
+        <div class="regiao-linha">
+
+            <span>
+                Outras Regiões
+            </span>
+
+            <div>
+
+                <strong>
+                    ${outras}
+                </strong>
+
+                <small>
+                    ${percentual(
+                        outras,
+                        total
+                    )}
+                </small>
+
+            </div>
+
+        </div>
+
     </div>
-  `;
+
+`;
+```
+
 }
 
-function renderizarGraficos(resumo, dados) {
-  // Registra o plugin de DataLabels se estiver disponível no HTML
-  if (typeof ChartDataLabels !== "undefined") {
-    Chart.register(ChartDataLabels);
-  }
+/* ============================================================
+GRÁFICO DE CIDADES
+============================================================ */
 
-  // 1. GRÁFICO POR REGIÃO (DOUGHNUT)
-  const ctxRegiao = document.getElementById("chartRegiao")?.getContext("2d");
-  if (ctxRegiao) {
-    if (chartRegiaoInstance) chartRegiaoInstance.destroy();
+function atualizarGraficoCidades(
+pedidos
+) {
 
-    chartRegiaoInstance = new Chart(ctxRegiao, {
-      type: "doughnut",
-      data: {
-        labels: ["São Paulo / ABC", "Jaguariúna / Entorno", "Outras Regiões"],
-        datasets: [{
-          data: [resumo.regioes.spAbc, resumo.regioes.jaguariunaEntorno, resumo.regioes.outras],
-          backgroundColor: ["#2563eb", "#10b981", "#64748b"]
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          datalabels: {
-            color: "#ffffff",
-            font: {
-              family: "'Inter', sans-serif",
-              weight: "bold",
-              size: 13
-            },
-            formatter: (value) => (value > 0 ? value : "")
-          }
+```
+const contagem = {};
+
+
+pedidos.forEach(
+    function (pedido) {
+
+        const cidade =
+            normalizarTexto(
+                pedido.cidade
+            ) ||
+            "NAO INFORMADO";
+
+
+        contagem[cidade] =
+            (
+                contagem[cidade] ||
+                0
+            ) + 1;
+
+    }
+);
+
+
+const cidades =
+    Object.entries(
+        contagem
+    ).sort(
+        function (a, b) {
+
+            return (
+                b[1] -
+                a[1]
+            );
+
         }
-      }
-    });
-  }
+    );
 
-  // 2. GRÁFICO POR TIPO DE OPERAÇÃO (BAR)
-  const ctxTipo = document.getElementById("chartTipo")?.getContext("2d");
-  if (ctxTipo) {
-    if (chartTipoInstance) chartTipoInstance.destroy();
 
-    chartTipoInstance = new Chart(ctxTipo, {
-      type: "bar",
-      data: {
-        labels: ["Agendado", "Coletado", "Entregue", "Finalizado", "Pend. Conf.", "Programado"],
-        datasets: [{
-          label: "Quantidade",
-          data: [
-            resumo.agendados, 
-            resumo.coletas, 
-            resumo.entregas, 
-            resumo.finalizados, 
-            resumo.pendentesConferencia, 
-            resumo.programados
-          ],
-          backgroundColor: ["#3b82f6", "#0284c7", "#10b981", "#059669", "#f59e0b", "#8b5cf6"]
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          datalabels: {
-            anchor: "end",
-            align: "top",
-            color: "#0f172a",
-            font: {
-              family: "'Inter', sans-serif",
-              weight: "bold",
-              size: 12
-            },
-            formatter: (value) => (value > 0 ? value : "")
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            grace: "12%" // Espaço superior para os rótulos não cortarem
-          }
+const labels =
+    cidades.map(
+        function (item) {
+            return item[0];
         }
-      }
-    });
-  }
+    );
+
+
+const valores =
+    cidades.map(
+        function (item) {
+            return item[1];
+        }
+    );
+
+
+renderizarGraficoBarras(
+    labels,
+    valores
+);
+```
+
 }
 
-function renderizarTabelaAgenda(dados) {
-  const tbody = document.querySelector("#tabelaAgenda tbody");
-  if (!tbody) return;
+/* ============================================================
+GRÁFICO DE BARRAS
+============================================================ */
 
-  const agenda = {};
-  dados.forEach(item => {
-    const dataChave = item.data || "Sem Data Agendada";
-    if (!agenda[dataChave]) agenda[dataChave] = { qtd: 0, statusSet: new Set() };
-    agenda[dataChave].qtd++;
-    if (item.statusRaw) agenda[dataChave].statusSet.add(item.statusRaw);
-  });
+function renderizarGraficoBarras(
+labels,
+valores
+) {
 
-  const datasOrdenadas = Object.keys(agenda).sort();
+```
+const canvas =
+    document.getElementById(
+        "chartRegiao"
+    );
 
-  tbody.innerHTML = datasOrdenadas.map(dt => `
-    <tr>
-      <td><strong>${formatarDataExibicao(dt)}</strong></td>
-      <td><strong>${agenda[dt].qtd}</strong></td>
-      <td><small>${Array.from(agenda[dt].statusSet).join(", ")}</small></td>
-    </tr>
-  `).join("");
+if (!canvas) {
+    return;
 }
 
-/**
- * 5. UTILS
+
+const ctx =
+    canvas.getContext(
+        "2d"
+    );
+
+
+if (
+    instanceChartRegiao
+) {
+
+    instanceChartRegiao.destroy();
+
+}
+
+
+instanceChartRegiao =
+    new Chart(
+        ctx,
+        {
+
+            type: "bar",
+
+            data: {
+
+                labels: labels,
+
+                datasets: [
+
+                    {
+
+                        label:
+                            "Qtd. de Pedidos",
+
+                        data:
+                            valores,
+
+                        backgroundColor:
+                            "#2563eb",
+
+                        borderRadius:
+                            5
+
+                    }
+
+                ]
+
+            },
+
+
+            options: {
+
+                responsive:
+                    true,
+
+                maintainAspectRatio:
+                    false,
+
+                plugins: {
+
+                    legend: {
+                        display: false
+                    },
+
+                    datalabels: {
+
+                        anchor:
+                            "end",
+
+                        align:
+                            "top",
+
+                        color:
+                            "#0f172a",
+
+                        font: {
+
+                            family:
+                                "'Inter', sans-serif",
+
+                            weight:
+                                "bold",
+
+                            size:
+                                12
+
+                        },
+
+                        formatter:
+                            function (
+                                value
+                            ) {
+
+                                return value >
+                                    0
+                                    ? value
+                                    : "";
+
+                            }
+
+                    }
+
+                },
+
+
+                scales: {
+
+                    y: {
+
+                        beginAtZero:
+                            true,
+
+                        ticks: {
+
+                            precision:
+                                0
+
+                        },
+
+                        grace:
+                            "15%"
+
+                    }
+
+                }
+
+            }
+
+        }
+    );
+```
+
+}
+
+/* ============================================================
+GRÁFICO POR TIPO
+============================================================ */
+
+function atualizarGraficoTipos(
+pedidos
+) {
+
+```
+const contagem = {};
+
+
+pedidos.forEach(
+    function (pedido) {
+
+        const tipo =
+            normalizarTexto(
+                pedido.tipo
+            ) ||
+            "OUTROS";
+
+
+        contagem[tipo] =
+            (
+                contagem[tipo] ||
+                0
+            ) + 1;
+
+    }
+);
+
+
+renderizarGraficoTipos(
+    Object.keys(
+        contagem
+    ),
+    Object.values(
+        contagem
+    )
+);
+```
+
+}
+
+/* ============================================================
+GRÁFICO DE TIPOS
+============================================================ */
+
+function renderizarGraficoTipos(
+labels,
+valores
+) {
+
+```
+const canvas =
+    document.getElementById(
+        "chartTipo"
+    );
+
+if (!canvas) {
+    return;
+}
+
+
+const ctx =
+    canvas.getContext(
+        "2d"
+    );
+
+
+if (
+    instanceChartTipo
+) {
+
+    instanceChartTipo.destroy();
+
+}
+
+
+instanceChartTipo =
+    new Chart(
+        ctx,
+        {
+
+            type: "doughnut",
+
+            data: {
+
+                labels:
+                    labels,
+
+                datasets: [
+
+                    {
+
+                        data:
+                            valores,
+
+                        backgroundColor: [
+
+                            "#2563eb",
+                            "#10b981",
+                            "#f59e0b",
+                            "#8b5cf6",
+                            "#ef4444",
+                            "#64748b",
+                            "#06b6d4"
+
+                        ]
+
+                    }
+
+                ]
+
+            },
+
+
+            options: {
+
+                responsive:
+                    true,
+
+                maintainAspectRatio:
+                    false,
+
+                plugins: {
+
+                    legend: {
+
+                        position:
+                            "top"
+
+                    },
+
+
+                    datalabels: {
+
+                        color:
+                            "#ffffff",
+
+                        font: {
+
+                            family:
+                                "'Inter', sans-serif",
+
+                            weight:
+                                "bold",
+
+                            size:
+                                13
+
+                        },
+
+                        formatter:
+                            function (
+                                value
+                            ) {
+
+                                return value >
+                                    0
+                                    ? value
+                                    : "";
+
+                            }
+
+                    }
+
+                }
+
+            }
+
+        }
+    );
+```
+
+}
+
+/* ============================================================
+TABELA INTERATIVA
+============================================================ */
+
+function atualizarTabelaDatas(
+dadosFiltrados
+) {
+
+```
+const tbody =
+    document.querySelector(
+        "#tabelaAgenda tbody"
+    );
+
+if (!tbody) {
+    return;
+}
+
+
+/*
+ * Agrupa por:
+ *
+ * DATA
+ * REGIÃO
+ * STATUS
  */
-function limparFiltrosDatas() {
-  document.getElementById("startDate").value = "";
-  document.getElementById("endDate").value = "";
-  document.getElementById("statusFilter").value = "TODOS";
-  aplicarFiltrosEAtualizar();
+
+const grupos = {};
+
+
+dadosFiltrados.forEach(
+    function (item, index) {
+
+        const data =
+            obterTimestampZerado(
+                item.DATA_V
+            );
+
+
+        const dataTexto =
+            data !== null
+                ? formatarData(data)
+                : "Sem Data";
+
+
+        const cidade =
+            obterCidade(item);
+
+
+        const regiao =
+            classificarRegiao(
+                cidade
+            );
+
+
+        const status =
+            normalizarTexto(
+                item.STATUS_W
+            ) ||
+            "SEM STATUS";
+
+
+        const chave =
+            dataTexto +
+            "|" +
+            regiao +
+            "|" +
+            status;
+
+
+        if (!grupos[chave]) {
+
+            grupos[chave] = {
+
+                data:
+                    dataTexto,
+
+                timestamp:
+                    data || 9999999999999,
+
+                regiao:
+                    regiao,
+
+                status:
+                    status,
+
+                pedidos:
+                    [],
+
+                quantidade:
+                    0
+
+            };
+
+        }
+
+
+        grupos[chave]
+            .pedidos
+            .push(item);
+
+
+        grupos[chave]
+            .quantidade++;
+
+    }
+);
+
+
+const gruposOrdenados =
+    Object.values(
+        grupos
+    ).sort(
+        function (a, b) {
+
+            return (
+                a.timestamp -
+                b.timestamp
+            );
+
+        }
+    );
+
+
+if (
+    gruposOrdenados.length === 0
+) {
+
+    tbody.innerHTML = `
+
+        <tr>
+
+            <td
+                colspan="4"
+                class="empty-table"
+            >
+                Nenhum pedido encontrado
+                para os filtros selecionados.
+            </td>
+
+        </tr>
+
+    `;
+
+    return;
+
 }
 
-function formatarDataIso(valor) {
-  if (!valor) return "";
-  if (typeof valor === "number") {
-    const dateObj = XLSX.SSF.parse_date_code(valor);
-    if (dateObj) return `${dateObj.y}-${String(dateObj.m).padStart(2, '0')}-${String(dateObj.d).padStart(2, '0')}`;
-  }
-  const str = String(valor).trim();
-  if (str.match(/^\d{4}-\d{2}-\d{2}/)) return str.substring(0, 10);
-  
-  const matchPt = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-  if (matchPt) {
-    const d = matchPt[1].padStart(2, '0');
-    const m = matchPt[2].padStart(2, '0');
-    const y = matchPt[3];
-    return `${y}-${m}-${d}`;
-  }
-  return "";
+
+let html = "";
+
+
+gruposOrdenados.forEach(
+    function (grupo, index) {
+
+        const grupoId =
+            "grupo-" +
+            index;
+
+
+        html += `
+
+            <tr class="agenda-row">
+
+                <td>
+
+                    <strong>
+                        ${grupo.data}
+                    </strong>
+
+                </td>
+
+
+                <td>
+
+                    <span
+                        class="region-badge"
+                    >
+                        ${nomeRegiao(
+                            grupo.regiao
+                        )}
+                    </span>
+
+                </td>
+
+
+                <td>
+
+                    <span
+                        class="status-badge"
+                    >
+                        ${grupo.status}
+                    </span>
+
+                </td>
+
+
+                <td>
+
+                    <button
+                        type="button"
+                        class="btn-expand"
+                        onclick="alternarDetalhes('${grupoId}')"
+                    >
+
+                        <strong>
+                            ${grupo.quantidade}
+                        </strong>
+
+                        <span>
+                            pedidos
+                        </span>
+
+                        <span
+                            class="arrow"
+                            id="arrow-${grupoId}"
+                        >
+                            ▾
+                        </span>
+
+                    </button>
+
+                </td>
+
+            </tr>
+
+
+            <tr
+                id="${grupoId}"
+                class="details-row"
+                style="display:none;"
+            >
+
+                <td
+                    colspan="4"
+                >
+
+                    <div
+                        class="details-container"
+                    >
+
+                        <table
+                            class="details-table"
+                        >
+
+                            <thead>
+
+                                <tr>
+
+                                    <th>
+                                        Nº Pedido
+                                    </th>
+
+                                    <th>
+                                        Fornecedor
+                                    </th>
+
+                                    <th>
+                                        Cidade
+                                    </th>
+
+                                    <th>
+                                        Tipo
+                                    </th>
+
+                                    <th>
+                                        Status
+                                    </th>
+
+                                    <th>
+                                        Linha
+                                    </th>
+
+                                </tr>
+
+                            </thead>
+
+                            <tbody>
+
+                                ${grupo.pedidos.map(
+                                    function (item) {
+
+                                        return `
+
+                                            <tr>
+
+                                                <td>
+
+                                                    <strong>
+                                                        ${escapeHtml(
+                                                            obterPedido(item) ||
+                                                            "Não informado"
+                                                        )}
+                                                    </strong>
+
+                                                </td>
+
+                                                <td>
+                                                    ${escapeHtml(
+                                                        obterFornecedor(item)
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    ${escapeHtml(
+                                                        obterCidade(item) ||
+                                                        "Não informado"
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    ${escapeHtml(
+                                                        obterTipo(item) ||
+                                                        "Não informado"
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    ${escapeHtml(
+                                                        String(
+                                                            item.STATUS_W ||
+                                                            "Sem status"
+                                                        )
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    ${item.LINHA_ORIGINAL || "-"}
+                                                </td>
+
+                                            </tr>
+
+                                        `;
+
+                                    }
+                                ).join("")}
+
+                            </tbody>
+
+                        </table>
+
+                    </div>
+
+                </td>
+
+            </tr>
+
+        `;
+
+    }
+);
+
+
+tbody.innerHTML =
+    html;
+```
+
 }
 
-function formatarDataExibicao(dataIso) {
-  if (!dataIso || !dataIso.includes("-")) return dataIso;
-  const [y, m, d] = dataIso.split("-");
-  return `${d}/${m}/${y}`;
+/* ============================================================
+ABRIR / FECHAR DETALHES
+============================================================ */
+
+function alternarDetalhes(
+grupoId
+) {
+
+```
+const linha =
+    document.getElementById(
+        grupoId
+    );
+
+const seta =
+    document.getElementById(
+        "arrow-" +
+        grupoId
+    );
+
+
+if (!linha) {
+    return;
+}
+
+
+if (
+    linha.style.display ===
+    "none"
+) {
+
+    linha.style.display =
+        "table-row";
+
+    if (seta) {
+        seta.textContent =
+            "▴";
+    }
+
+}
+else {
+
+    linha.style.display =
+        "none";
+
+    if (seta) {
+        seta.textContent =
+            "▾";
+    }
+
+}
+```
+
+}
+
+/* ============================================================
+DATA
+============================================================ */
+
+function obterTimestampZerado(
+valor
+) {
+
+```
+if (
+    valor === undefined ||
+    valor === null ||
+    valor === ""
+) {
+
+    return null;
+
+}
+
+
+let dia = null;
+let mes = null;
+let ano = null;
+
+
+/*
+ * Date
+ */
+
+if (
+    valor instanceof Date
+) {
+
+    dia =
+        valor.getDate();
+
+    mes =
+        valor.getMonth();
+
+    ano =
+        valor.getFullYear();
+
+}
+
+
+/*
+ * Número serial do Excel
+ */
+
+else if (
+    typeof valor === "number"
+) {
+
+    const dataExcel =
+        XLSX.SSF.parse_date_code(
+            valor
+        );
+
+
+    if (!dataExcel) {
+        return null;
+    }
+
+
+    dia =
+        dataExcel.d;
+
+    mes =
+        dataExcel.m - 1;
+
+    ano =
+        dataExcel.y;
+
+}
+
+
+/*
+ * Texto
+ */
+
+else {
+
+    let texto =
+        String(valor)
+            .trim();
+
+
+    texto =
+        texto
+            .split(" ")[0]
+            .split("T")[0];
+
+
+    /*
+     * DD/MM/YYYY
+     */
+
+    if (
+        texto.includes("/")
+    ) {
+
+        const partes =
+            texto.split("/");
+
+
+        if (
+            partes.length === 3
+        ) {
+
+            dia =
+                parseInt(
+                    partes[0],
+                    10
+                );
+
+            mes =
+                parseInt(
+                    partes[1],
+                    10
+                ) - 1;
+
+            ano =
+                parseInt(
+                    partes[2],
+                    10
+                );
+
+        }
+
+    }
+
+
+    /*
+     * YYYY-MM-DD
+     */
+
+    else if (
+        texto.includes("-")
+    ) {
+
+        const partes =
+            texto.split("-");
+
+
+        if (
+            partes.length === 3
+        ) {
+
+            ano =
+                parseInt(
+                    partes[0],
+                    10
+                );
+
+            mes =
+                parseInt(
+                    partes[1],
+                    10
+                ) - 1;
+
+            dia =
+                parseInt(
+                    partes[2],
+                    10
+                );
+
+        }
+
+    }
+
+
+    /*
+     * YYYYMMDD
+     */
+
+    else if (
+        /^\d{8}$/.test(
+            texto
+        )
+    ) {
+
+        ano =
+            parseInt(
+                texto.substring(
+                    0,
+                    4
+                ),
+                10
+            );
+
+        mes =
+            parseInt(
+                texto.substring(
+                    4,
+                    6
+                ),
+                10
+            ) - 1;
+
+        dia =
+            parseInt(
+                texto.substring(
+                    6,
+                    8
+                ),
+                10
+            );
+
+    }
+
+}
+
+
+if (
+    dia === null ||
+    mes === null ||
+    ano === null ||
+    isNaN(dia) ||
+    isNaN(mes) ||
+    isNaN(ano)
+) {
+
+    return null;
+
+}
+
+
+const data =
+    new Date(
+        ano,
+        mes,
+        dia,
+        0,
+        0,
+        0,
+        0
+    );
+
+
+if (
+    data.getFullYear() !== ano ||
+    data.getMonth() !== mes ||
+    data.getDate() !== dia
+) {
+
+    return null;
+
+}
+
+
+return data.getTime();
+```
+
+}
+
+/* ============================================================
+FORMATAR DATA
+============================================================ */
+
+function formatarData(
+timestamp
+) {
+
+```
+if (!timestamp) {
+    return "";
+}
+
+
+const data =
+    new Date(
+        timestamp
+    );
+
+
+const dia =
+    String(
+        data.getDate()
+    ).padStart(
+        2,
+        "0"
+    );
+
+
+const mes =
+    String(
+        data.getMonth() + 1
+    ).padStart(
+        2,
+        "0"
+    );
+
+
+const ano =
+    data.getFullYear();
+
+
+return (
+    dia +
+    "/" +
+    mes +
+    "/" +
+    ano
+);
+```
+
+}
+
+/* ============================================================
+ESCAPE HTML
+============================================================ */
+
+function escapeHtml(valor) {
+
+```
+return String(
+    valor || ""
+)
+    .replace(
+        /&/g,
+        "&amp;"
+    )
+    .replace(
+        /</g,
+        "&lt;"
+    )
+    .replace(
+        />/g,
+        "&gt;"
+    )
+    .replace(
+        /"/g,
+        "&quot;"
+    )
+    .replace(
+        /'/g,
+        "&#039;"
+    );
+```
+
+}
+
+/* ============================================================
+LIMPAR FILTROS
+============================================================ */
+
+function limparFiltros() {
+
+```
+const status =
+    document.getElementById(
+        "statusFilter"
+    );
+
+const regiao =
+    document.getElementById(
+        "regionFilter"
+    );
+
+const inicio =
+    document.getElementById(
+        "startDate"
+    );
+
+const fim =
+    document.getElementById(
+        "endDate"
+    );
+
+
+if (status) {
+    status.value =
+        "TODOS";
+}
+
+
+if (regiao) {
+    regiao.value =
+        "TODAS";
+}
+
+
+if (inicio) {
+    inicio.value =
+        "";
+}
+
+
+if (fim) {
+    fim.value =
+        "";
+}
+
+
+processarEAtualizar();
+```
+
 }
