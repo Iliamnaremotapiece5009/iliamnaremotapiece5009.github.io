@@ -17,6 +17,9 @@
 
     <!-- Plugin de números nos gráficos -->
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    
+    <!-- JavaScript Principal -->
+    <script src="script.js" defer></script>
 </head>
 
 <body>
@@ -92,7 +95,6 @@
 
         <!-- LIMPAR -->
         <div class="control-group">
-            <!-- Adicionado type="button" para evitar recarregamento acidental da página -->
             <button
                 type="button"
                 class="btn-clear"
@@ -105,14 +107,22 @@
 
     </section>
 
+    <!-- PAINEL DE KPIS -->
+    <section id="painelKPIs">
+        <!-- Preenchido dinamicamente via JS -->
+    </section>
+
+    <!-- PAINEL REGIONAL -->
+    <section id="painelRegioes">
+        <!-- Preenchido dinamicamente via JS -->
+    </section>
+
     <!-- CONTAINER DOS GRÁFICOS -->
     <main class="grid-container">
 
         <!-- GRÁFICO CIDADES -->
         <section class="card">
-            <h3>
-                Volume de Pedidos por Cidade
-            </h3>
+            <h3>Volume de Pedidos por Cidade</h3>
             <div class="chart-box">
                 <canvas id="chartRegiao"></canvas>
             </div>
@@ -120,9 +130,7 @@
 
         <!-- GRÁFICO TIPOS -->
         <section class="card">
-            <h3>
-                Operações por Tipo
-            </h3>
+            <h3>Operações por Tipo</h3>
             <div class="chart-box">
                 <canvas id="chartTipo"></canvas>
             </div>
@@ -130,9 +138,24 @@
 
     </main>
 
-    <!-- JAVASCRIPT -->
-    <!-- Adicionado defer para carregar após o DOM estar totalmente pronto -->
-    <script src="script.js" defer></script>
+    <!-- TABELA DE AGENDA FUTURA -->
+    <section class="card" id="cardTabelaAgenda">
+        <h3>Agenda Futura de Coletas / Entregas</h3>
+        <div>
+            <table id="tabelaAgenda">
+                <thead>
+                    <tr>
+                        <th>Data Agendada</th>
+                        <th>Pedidos</th>
+                        <th>Status / Detalhes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Preenchido dinamicamente via JS -->
+                </tbody>
+            </table>
+        </div>
+    </section>
 
 </body>
 
