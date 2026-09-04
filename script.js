@@ -32,6 +32,17 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 /**
+ * Função utilitária para normalizar textos (remove acentos e padroniza para caixa alta)
+ */
+function normalizarTexto(texto) {
+  return String(texto || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .trim();
+}
+
+/**
  * 1. LEITURA APRIMORADA DE ARQUIVOS (XLSX, XLS E CSV)
  */
 function carregarArquivoExcel(event) {
@@ -62,7 +73,7 @@ function carregarArquivoExcel(event) {
       }
 
       // Converte cabeçalho para maiúsculas e remove espaços
-      const cabecalho = jsonMatriz[0].map(c => String(c || "").toUpperCase().trim());
+      const cabecalho = jsonMatriz[0].map(c => normalizarTexto(c));
       const linhas = jsonMatriz.slice(1);
 
       // Busca colunas por palavras-chave flexíveis
@@ -77,9 +88,9 @@ function carregarArquivoExcel(event) {
 
       baseDadosGlobal = linhas.map((linha, index) => ({
         id: linha[0] || `PED-${index + 1}`,
-        cidade: String(linha[idxCidade] || "").toUpperCase().trim(),
+        cidade: normalizarTexto(linha[idxCidade]),
         data: formatarDataIso(linha[idxData]),
-        status: String(linha[idxStatus] || "").toUpperCase().trim()
+        status: normalizarTexto(linha[idxStatus])
       })).filter(item => item.cidade || item.status);
 
       aplicarFiltrosEAtualizar();
@@ -98,7 +109,7 @@ function carregarArquivoExcel(event) {
 }
 
 /**
- * 2. FILTRAGEM DE DADOS (COM BUSCA FLEXÍVEL)
+ * 2. FILTRAGEM DE DADOS (CORRIGIDA E SEM DUPLICAÇÃO DE FUNÇÃO)
  */
 function aplicarFiltrosEAtualizar() {
   const statusFiltro = document.getElementById("statusFilter")?.value || "TODOS";
@@ -106,66 +117,32 @@ function aplicarFiltrosEAtualizar() {
   const dataFim = document.getElementById("endDate")?.value;
 
   const dadosFiltrados = baseDadosGlobal.filter(item => {
-    let atendeStatus = false;
     const st = item.status;
+    let atendeStatus = false;
 
     switch (statusFiltro) {
       case "AGENDADO_COLETADO":
-        atendeStatus = st.includes("AGEND") || st.includes("COLET");
+        atendeStatus = /AGEND|COLET/.test(st);
         break;
       case "AGENDADO":
-        atendeStatus = st.includes("AGEND");
+        atendeStatus = /AGEND/.test(st);
         break;
       case "COLETADO":
-        atendeStatus = st.includes("COLET");
+        atendeStatus = /COLET/.test(st);
         break;
       case "FINALIZADO":
-        atendeStatus = st.includes("FINALIZ") || st.includes("CONCLU");
+        atendeStatus = /FINALIZ|CONCLU|ENCERR|ATEND/.test(st);
         break;
       case "ENTREGUE":
-        atendeStatus = st.includes("ENTREG");
+        atendeStatus = /ENTREG/.test(st);
         break;
       case "PROGRAMADO":
-        atendeStatus = st.includes("PROGRAM");
+        atendeStatus = /PROGRAM/.test(st);
         break;
       case "TODOS":
       default:
         atendeStatus = true;
         break;
-    }
-
-    let atendeData = true;
-    if (dataInicio && item.data) atendeData = atendeData && item.data >= dataInicio;
-    if (dataFim && item.data) atendeData = atendeData && item.data <= dataFim;
-
-    return atendeStatus && atendeData;
-  });
-
-  const resumo = processarDadosLogistica(dadosFiltrados);
-  renderizarKPIs(resumo);
-  renderizarPainelRegioes(resumo);
-  renderizarGraficos(resumo, dadosFiltrados);
-  renderizarTabelaAgenda(dadosFiltrados);
-}
-/**
- * 2. FILTRAGEM DE DADOS (COM SUPORTE A ENTREGUE E FINALIZADO)
- */
-function aplicarFiltrosEAtualizar() {
-  const statusFiltro = document.getElementById("statusFilter")?.value || "TODOS";
-  const dataInicio = document.getElementById("startDate")?.value;
-  const dataFim = document.getElementById("endDate")?.value;
-
-  const dadosFiltrados = baseDadosGlobal.filter(item => {
-    let atendeStatus = true;
-    
-    if (statusFiltro === "AGENDADO_COLETADO") {
-      atendeStatus = item.status.includes("AGEND") || item.status.includes("COLET");
-    } else if (statusFiltro === "FINALIZADO") {
-      atendeStatus = item.status.includes("FINALIZAD") || item.status.includes("CONCLU");
-    } else if (statusFiltro === "ENTREGUE") {
-      atendeStatus = item.status.includes("ENTREG");
-    } else if (statusFiltro !== "TODOS") {
-      atendeStatus = item.status.includes(statusFiltro);
     }
 
     let atendeData = true;
@@ -198,7 +175,7 @@ function processarDadosLogistica(dados) {
   dados.forEach(item => {
     if (item.status.includes("COLET")) resumo.coletas++;
     else if (item.status.includes("RECEB")) resumo.recebimentos++;
-    else if (item.status.includes("ENTREG") || item.status.includes("FINALIZAD")) resumo.entregas++;
+    else if (item.status.includes("ENTREG") || item.status.includes("FINALIZ")) resumo.entregas++;
     else resumo.outrosTipos++;
 
     if (CIDADES_SP_ABC.includes(item.cidade)) resumo.regioes.spAbc++;
