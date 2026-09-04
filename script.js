@@ -61,12 +61,19 @@ function carregarArquivoExcel(event) {
         return;
       }
 
+      // Converte cabeçalho para maiúsculas e remove espaços
       const cabecalho = jsonMatriz[0].map(c => String(c || "").toUpperCase().trim());
       const linhas = jsonMatriz.slice(1);
 
-      const idxCidade = cabecalho.findIndex(c => c.includes("CIDADE")) !== -1 ? cabecalho.findIndex(c => c.includes("CIDADE")) : 2;
-      const idxData = cabecalho.findIndex(c => c.includes("DATA") || c.includes("AGEND")) !== -1 ? cabecalho.findIndex(c => c.includes("DATA") || c.includes("AGEND")) : 21;
-      const idxStatus = cabecalho.findIndex(c => c.includes("STATUS") || c.includes("TIPO") || c.includes("OPER")) !== -1 ? cabecalho.findIndex(c => c.includes("STATUS") || c.includes("TIPO") || c.includes("OPER")) : 22;
+      // Busca colunas por palavras-chave flexíveis
+      let idxCidade = cabecalho.findIndex(c => c.includes("CIDADE") || c.includes("MUNIC"));
+      let idxData = cabecalho.findIndex(c => c.includes("DATA") || c.includes("AGEND") || c.includes("PREV"));
+      let idxStatus = cabecalho.findIndex(c => c.includes("STATUS") || c.includes("SITUAC") || c.includes("TIPO") || c.includes("ETAPA"));
+
+      // Fallback para posições padrão caso não encontre pelo nome
+      if (idxCidade === -1) idxCidade = 2;
+      if (idxData === -1) idxData = 21;
+      if (idxStatus === -1) idxStatus = 22;
 
       baseDadosGlobal = linhas.map((linha, index) => ({
         id: linha[0] || `PED-${index + 1}`,
@@ -79,7 +86,7 @@ function carregarArquivoExcel(event) {
 
     } catch (erro) {
       console.error("Erro ao processar o arquivo:", erro);
-      alert("Houve um erro ao ler o arquivo CSV/Excel.");
+      alert("Houve um erro ao ler o arquivo CSV/Excel. Verifique o console (F12).");
     }
   };
 
@@ -90,6 +97,56 @@ function carregarArquivoExcel(event) {
   }
 }
 
+/**
+ * 2. FILTRAGEM DE DADOS (COM BUSCA FLEXÍVEL)
+ */
+function aplicarFiltrosEAtualizar() {
+  const statusFiltro = document.getElementById("statusFilter")?.value || "TODOS";
+  const dataInicio = document.getElementById("startDate")?.value;
+  const dataFim = document.getElementById("endDate")?.value;
+
+  const dadosFiltrados = baseDadosGlobal.filter(item => {
+    let atendeStatus = false;
+    const st = item.status;
+
+    switch (statusFiltro) {
+      case "AGENDADO_COLETADO":
+        atendeStatus = st.includes("AGEND") || st.includes("COLET");
+        break;
+      case "AGENDADO":
+        atendeStatus = st.includes("AGEND");
+        break;
+      case "COLETADO":
+        atendeStatus = st.includes("COLET");
+        break;
+      case "FINALIZADO":
+        atendeStatus = st.includes("FINALIZ") || st.includes("CONCLU");
+        break;
+      case "ENTREGUE":
+        atendeStatus = st.includes("ENTREG");
+        break;
+      case "PROGRAMADO":
+        atendeStatus = st.includes("PROGRAM");
+        break;
+      case "TODOS":
+      default:
+        atendeStatus = true;
+        break;
+    }
+
+    let atendeData = true;
+    if (dataInicio && item.data) atendeData = atendeData && item.data >= dataInicio;
+    if (dataFim && item.data) atendeData = atendeData && item.data <= dataFim;
+
+    return atendeStatus && atendeData;
+  });
+
+  const resumo = processarDadosLogistica(dadosFiltrados);
+  renderizarKPIs(resumo);
+  renderizarPainelRegioes(resumo);
+  renderizarGraficos(resumo, dadosFiltrados);
+  renderizarTabelaAgenda(dadosFiltrados);
+}
 /**
  * 2. FILTRAGEM DE DADOS (COM SUPORTE A ENTREGUE E FINALIZADO)
  */
