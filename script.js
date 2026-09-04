@@ -121,6 +121,9 @@ function aplicarFiltrosEAtualizar() {
     let atendeStatus = false;
 
     switch (statusFiltro) {
+      case "AGENDADO_COLETADO":
+        atendeStatus = (st === "AGENDADO" || st === "COLETADO");
+        break;
       case "AGENDADO":
         atendeStatus = (st === "AGENDADO");
         break;
@@ -253,6 +256,12 @@ function renderizarPainelRegioes(resumo) {
 }
 
 function renderizarGraficos(resumo, dados) {
+  // Registra o plugin de DataLabels se estiver disponível no HTML
+  if (typeof ChartDataLabels !== "undefined") {
+    Chart.register(ChartDataLabels);
+  }
+
+  // 1. GRÁFICO POR REGIÃO (DOUGHNUT)
   const ctxRegiao = document.getElementById("chartRegiao")?.getContext("2d");
   if (ctxRegiao) {
     if (chartRegiaoInstance) chartRegiaoInstance.destroy();
@@ -266,10 +275,25 @@ function renderizarGraficos(resumo, dados) {
           backgroundColor: ["#2563eb", "#10b981", "#64748b"]
         }]
       },
-      options: { responsive: true, maintainAspectRatio: false }
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          datalabels: {
+            color: "#ffffff",
+            font: {
+              family: "'Inter', sans-serif",
+              weight: "bold",
+              size: 13
+            },
+            formatter: (value) => (value > 0 ? value : "")
+          }
+        }
+      }
     });
   }
 
+  // 2. GRÁFICO POR TIPO DE OPERAÇÃO (BAR)
   const ctxTipo = document.getElementById("chartTipo")?.getContext("2d");
   if (ctxTipo) {
     if (chartTipoInstance) chartTipoInstance.destroy();
@@ -291,7 +315,30 @@ function renderizarGraficos(resumo, dados) {
           backgroundColor: ["#3b82f6", "#0284c7", "#10b981", "#059669", "#f59e0b", "#8b5cf6"]
         }]
       },
-      options: { responsive: true, maintainAspectRatio: false }
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          datalabels: {
+            anchor: "end",
+            align: "top",
+            color: "#0f172a",
+            font: {
+              family: "'Inter', sans-serif",
+              weight: "bold",
+              size: 12
+            },
+            formatter: (value) => (value > 0 ? value : "")
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            grace: "12%" // Espaço superior para os rótulos não cortarem
+          }
+        }
+      }
     });
   }
 }
