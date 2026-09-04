@@ -1,0 +1,55 @@
+Imports System.IO
+Imports Microsoft.AspNetCore.Http
+Imports Microsoft.AspNetCore.Mvc
+Imports ClosedXML.Excel
+
+<Route("api/[controller]")>
+<ApiController>
+Public Class DashboardController
+    Inherits ControllerBase
+
+    <HttpPost("importar-excel")>
+    Public Function ImportarExcel(arquivo As IFormFile) As IActionResult
+        If arquivo Is Nothing OrElse arquivo.Length = 0 Then
+            Return BadRequest("Nenhum arquivo Excel fornecido.")
+        End If
+
+        Dim contagemCidade As New Dictionary(Of String, Integer)()
+        Dim contagemTipo As New Dictionary(Of String, Integer)()
+
+        Using stream As New MemoryStream()
+            arquivo.CopyTo(stream)
+            Using workbook As New XLWorkbook(stream)
+                Dim worksheet = workbook.Worksheet(1)
+                Dim rows = worksheet.RowsUsed().Skip(1) ' Pula a linha do cabeçalho
+
+                For Each row In rows
+                    Dim status As String = row.Cell("W").GetValue(Of String)().Trim().ToUpper()
+
+                    ' Processa apenas registros marcados como AGENDADO
+                    If status = "AGENDADO" Then
+                        Dim cidade As String = row.Cell("K").GetValue(Of String)().Trim().ToUpper()
+                        Dim tipo As String = row.Cell("F").GetValue(Of String)().Trim().ToUpper()
+
+                        If Not contagemCidade.ContainsKey(cidade) Then
+                            contagemCidade(cidade) = 0
+                        End If
+                        contagemCidade(cidade) += 1
+
+                        If Not contagemTipo.ContainsKey(tipo) Then
+                            contagemTipo(tipo) = 0
+                        End If
+                        contagemTipo(tipo) += 1
+                    End If
+                Next
+            End Using
+        End Using
+
+        Return Ok(New With {
+            Key .cidadesLabels = contagemCidade.Keys.ToList(),
+            Key .cidadesValores = contagemCidade.Values.ToList(),
+            Key .tiposLabels = contagemTipo.Keys.ToList(),
+            Key .tiposValores = contagemTipo.Values.ToList()
+        })
+    End Function
+End Class
